@@ -17,6 +17,7 @@ import {
 import { homedir } from "os";
 import { join } from "path";
 import { existsSync, mkdirSync, statSync, unlinkSync, readdirSync, readFileSync, writeFileSync, openSync, readSync, closeSync } from "fs";
+import { createOllamaLLM } from "./ollama.js";
 
 // =============================================================================
 // Embedding Formatting Functions
@@ -1644,6 +1645,18 @@ export function getDefaultLlamaCpp(): LlamaCpp {
     defaultLlamaCpp = new LlamaCpp();
   }
   return defaultLlamaCpp;
+}
+
+/**
+ * Get the default LLM instance based on configuration.
+ * If QMD_LLM_BACKEND is set to "ollama", returns an OllamaLLM instance.
+ * Otherwise returns the default LlamaCpp instance.
+ */
+export function getDefaultLLM(): LLM {
+  if (process.env.QMD_LLM_BACKEND === "ollama") {
+    return createOllamaLLM();
+  }
+  return getDefaultLlamaCpp();
 }
 
 /**
