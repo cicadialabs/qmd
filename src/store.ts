@@ -12,6 +12,7 @@
  */
 
 import { openDatabase, loadSqliteVec } from "./db.js";
+import { OllamaLLM } from "./ollama.js";
 import type { Database } from "./db.js";
 import picomatch from "picomatch";
 import { createHash } from "crypto";
@@ -1415,6 +1416,80 @@ export async function generateEmbeddings(
   const now = new Date().toISOString();
   const { maxDocsPerBatch, maxBatchBytes } = resolveEmbedOptions(options);
   const encoder = new TextEncoder();
+
+  // --- Ollama embed path ---
+  if (process.env.QMD_LLM_BACKEND === 'ollama') {
+    const ollama = new OllamaLLM();
+    const embedModel = ollama.embedModelId;
+    console.log(`${String.fromCharCode(27)}[2mModel: ollama/${embedModel}${String.fromCharCode(27)}[0m`);
+
+    if (options?.force) {
+      clearAllEmbeddings(db);
+    }
+
+    const docsToEmbed = getPendingEmbeddingDocs(db);
+    if (docsToEmbed.length === 0) {
+      return { docsProcessed: 0, chunksEmbedded: 0, errors: 0, durationMs: 0 };
+    }
+    const totalBytes = docsToEmbed.reduce((sum, doc) => sum + Math.max(0, doc.bytes), 0);
+    const startTime2 = Date.now();
+    let chunksEmbedded = 0;
+    let errors = 0;
+    let bytesProcessed = 0;
+    let vectorTableInitialized = false;
+
+    const batches = buildEmbeddingBatches(docsToEmbed, maxDocsPerBatch, maxBatchBytes);
+    for (const batchMeta of batches) {
+      const batchDocs = getEmbeddingDocsForBatch(db, batchMeta);
+      const batchChunks: ChunkItem[] = [];
+      const batchBytes = batchMeta.reduce((sum, doc) => sum + Math.max(0, doc.bytes), 0);
+
+      for (const doc of batchDocs) {
+        if (!doc.body.trim()) continue;
+        const title = extractTitle(doc.body, doc.path);
+        const chunks = await chunkDocumentByTokens(doc.body, undefined, undefined, undefined, doc.path, options?.chunkStrategy);
+        for (let seq = 0; seq < chunks.length; seq++) {
+          batchChunks.push({
+            hash: doc.hash, title, text: chunks[seq]!.text, seq,
+            pos: chunks[seq]!.pos, tokens: chunks[seq]!.tokens,
+            bytes: encoder.encode(chunks[seq]!.text).length,
+          });
+        }
+      }
+
+      if (batchChunks.length === 0) {
+        bytesProcessed += batchBytes;
+        options?.onProgress?.({ chunksEmbedded, totalChunks: batchChunks.length, bytesProcessed, totalBytes, errors });
+        continue;
+      }
+
+      for (const chunk of batchChunks) {
+        try {
+          const text = formatDocForEmbedding(chunk.text, chunk.title, embedModel);
+          const result = await ollama.embed(text, { model: embedModel });
+          if (result && result.embedding) {
+            if (!vectorTableInitialized) {
+              store.ensureVecTable(result.embedding.length);
+              vectorTableInitialized = true;
+            }
+            insertEmbedding(db, chunk.hash, chunk.seq, chunk.pos, new Float32Array(result.embedding), embedModel, now);
+            chunksEmbedded++;
+          } else {
+            errors++;
+          }
+        } catch (e) {
+          console.warn(`⚠ Embedding error: ${e instanceof Error ? e.message : String(e)}`);
+          errors++;
+        }
+        bytesProcessed += chunk.bytes;
+        options?.onProgress?.({ chunksEmbedded, totalChunks: batchChunks.length, bytesProcessed, totalBytes, errors });
+      }
+      bytesProcessed += batchBytes;
+    }
+    await ollama.dispose();
+    return { docsProcessed: docsToEmbed.length, chunksEmbedded, errors, durationMs: Date.now() - startTime2 };
+  }
+  // --- End Ollama embed path ---
 
   if (options?.force) {
     clearAllEmbeddings(db);
