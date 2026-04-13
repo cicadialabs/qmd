@@ -115,49 +115,44 @@ type OllamaShowResponse = {
  * No local model downloads required — Ollama handles model management.
  */
 export class OllamaLLM implements LLM {
-  private readonly _baseUrl: string;
-  private readonly _embedModelName: string;
-  private readonly _generateModelName: string;
-  private readonly _rerankModelName: string;
+  private readonly baseUrl: string;
+  private readonly embedModelName: string;
+  private readonly generateModelName: string;
+  private readonly rerankModelName: string;
   private disposed = false;
 
   constructor(config: OllamaConfig = {}) {
-    this._baseUrl =
+    this.baseUrl =
       config.baseUrl ||
       process.env.QMD_OLLAMA_BASE_URL ||
       DEFAULT_BASE_URL;
-    this._embedModelName =
+    this.embedModelName =
       config.embedModel ||
       process.env.QMD_OLLAMA_EMBED_MODEL ||
       DEFAULT_EMBED_MODEL;
-    this._generateModelName =
+    this.generateModelName =
       config.generateModel ||
       process.env.QMD_OLLAMA_GENERATE_MODEL ||
       DEFAULT_GENERATE_MODEL;
-    this._rerankModelName =
+    this.rerankModelName =
       config.rerankModel ||
       process.env.QMD_OLLAMA_RERANK_MODEL ||
       DEFAULT_RERANK_MODEL;
   }
 
-  /** Embed model name — part of the LLM interface */
-  get embedModelName(): string {
-    return this._embedModelName;
-  }
-
-  /** Current embed model identifier (alias for embedModelName) */
+  /** Current embed model identifier */
   get embedModelId(): string {
-    return this._embedModelName;
+    return this.embedModelName;
   }
 
   /** Current generate model identifier */
   get generateModelId(): string {
-    return this._generateModelName;
+    return this.generateModelName;
   }
 
   /** Current rerank model identifier */
   get rerankModelId(): string {
-    return this._rerankModelName;
+    return this.rerankModelName;
   }
 
   // ===========================================================================
@@ -167,7 +162,7 @@ export class OllamaLLM implements LLM {
   async embed(text: string, options: EmbedOptions = {}): Promise<EmbeddingResult | null> {
     this.assertNotDisposed();
 
-    const model = options.model || this._embedModelName;
+    const model = options.model || this.embedModelName;
     const body: OllamaEmbedRequest = {
       model,
       input: text,
@@ -197,43 +192,10 @@ export class OllamaLLM implements LLM {
     }
   }
 
-  async embedBatch(texts: string[], options: EmbedOptions = {}): Promise<(EmbeddingResult | null)[]> {
-    this.assertNotDisposed();
-
-    const model = options.model || this._embedModelName;
-    const body: OllamaEmbedRequest = {
-      model,
-      input: texts,
-    };
-
-    try {
-      const resp = await this.fetch("/api/embed", body);
-      if (!resp.ok) {
-        const errText = await resp.text();
-        console.error(`Ollama embedBatch error (${resp.status}): ${errText}`);
-        return texts.map(() => null);
-      }
-
-      const data = (await resp.json()) as OllamaEmbedResponse;
-      if (!data.embeddings || data.embeddings.length === 0) {
-        console.error("Ollama embedBatch: no embeddings returned");
-        return texts.map(() => null);
-      }
-
-      return data.embeddings.map((embedding, i) => ({
-        embedding: embedding!,
-        model: data.model || model,
-      }));
-    } catch (error) {
-      console.error("Ollama embedBatch error:", error);
-      return texts.map(() => null);
-    }
-  }
-
   async generate(prompt: string, options: GenerateOptions = {}): Promise<GenerateResult | null> {
     this.assertNotDisposed();
 
-    const model = options.model || this._generateModelName;
+    const model = options.model || this.generateModelName;
     const maxTokens = options.maxTokens ?? 150;
     const temperature = options.temperature ?? 0.7;
 
@@ -274,7 +236,7 @@ export class OllamaLLM implements LLM {
     this.assertNotDisposed();
 
     try {
-      const resp = await fetch(`${this._baseUrl}/api/show`, {
+      const resp = await fetch(`${this.baseUrl}/api/show`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: model }),
@@ -307,7 +269,7 @@ export class OllamaLLM implements LLM {
       : `/no_think Expand this search query: ${query}`;
 
     const body: OllamaGenerateRequest = {
-      model: this._generateModelName,
+      model: this.generateModelName,
       prompt,
       stream: false,
       options: {
@@ -376,7 +338,7 @@ export class OllamaLLM implements LLM {
   ): Promise<RerankResult> {
     this.assertNotDisposed();
 
-    const model = options.model || this._rerankModelName;
+    const model = options.model || this.rerankModelName;
 
     if (documents.length === 0) {
       return { results: [], model };
@@ -525,7 +487,7 @@ export class OllamaLLM implements LLM {
    * Send a POST request to the Ollama server.
    */
   private fetch(path: string, body: unknown): Promise<Response> {
-    return fetch(`${this._baseUrl}${path}`, {
+    return fetch(`${this.baseUrl}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

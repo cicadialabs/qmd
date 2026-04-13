@@ -369,19 +369,9 @@ export async function pullModels(
  */
 export interface LLM {
   /**
-   * The embedding model identifier (URI or name) used by this LLM instance.
-   */
-  readonly embedModelName: string;
-
-  /**
    * Get embeddings for text
    */
   embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult | null>;
-
-  /**
-   * Get embeddings for multiple texts in a single batch call.
-   */
-  embedBatch(texts: string[], options?: EmbedOptions): Promise<(EmbeddingResult | null)[]>;
 
   /**
    * Generate text completion
@@ -397,7 +387,7 @@ export interface LLM {
    * Expand a search query into multiple variations for different backends.
    * Returns a list of Queryable objects.
    */
-  expandQuery(query: string, options?: { context?: string, includeLexical?: boolean, intent?: string }): Promise<Queryable[]>;
+  expandQuery(query: string, options?: { context?: string, includeLexical?: boolean }): Promise<Queryable[]>;
 
   /**
    * Rerank documents by relevance to a query
@@ -1614,104 +1604,17 @@ export async function withLLMSession<T>(
 }
 
 /**
- * Lightweight ILLMSession implementation for non-LlamaCpp backends (e.g. Ollama).
- * Provides the same interface as LLMSession but without operation tracking or
- * session management, since remote backends manage their own resources.
- */
-class SimpleLLMSession implements ILLMSession {
-  private _released = false;
-  private _abortController: AbortController;
-  private _maxDurationTimer: ReturnType<typeof setTimeout> | null = null;
-
-  constructor(
-    private readonly llm: LLM,
-    options: LLMSessionOptions = {}
-  ) {
-    this._abortController = new AbortController();
-
-    if (options.signal) {
-      if (options.signal.aborted) {
-        this._abortController.abort(options.signal.reason);
-      } else {
-        options.signal.addEventListener("abort", () => {
-          this._abortController.abort(options.signal!.reason);
-        }, { once: true });
-      }
-    }
-
-    const maxDuration = options.maxDuration ?? 10 * 60 * 1000;
-    if (maxDuration > 0) {
-      this._maxDurationTimer = setTimeout(() => {
-        this._abortController.abort(new Error(`Session exceeded max duration of ${maxDuration}ms`));
-      }, maxDuration);
-      this._maxDurationTimer.unref();
-    }
-  }
-
-  get isValid(): boolean {
-    return !this._released && !this._abortController.signal.aborted;
-  }
-
-  get signal(): AbortSignal {
-    return this._abortController.signal;
-  }
-
-  release(): void {
-    if (this._released) return;
-    this._released = true;
-    if (this._maxDurationTimer) {
-      clearTimeout(this._maxDurationTimer);
-      this._maxDurationTimer = null;
-    }
-    this._abortController.abort(new Error("Session released"));
-  }
-
-  async embed(text: string, options?: EmbedOptions): Promise<EmbeddingResult | null> {
-    return this.llm.embed(text, options);
-  }
-
-  async embedBatch(texts: string[], options?: EmbedOptions): Promise<(EmbeddingResult | null)[]> {
-    return this.llm.embedBatch(texts, options);
-  }
-
-  async expandQuery(
-    query: string,
-    options?: { context?: string; includeLexical?: boolean }
-  ): Promise<Queryable[]> {
-    return this.llm.expandQuery(query, options);
-  }
-
-  async rerank(
-    query: string,
-    documents: RerankDocument[],
-    options?: RerankOptions
-  ): Promise<RerankResult> {
-    return this.llm.rerank(query, documents, options);
-  }
-}
-
-/**
- * Execute a function with a scoped LLM session using a specific LLM instance.
- * For LlamaCpp instances, uses full session management with lifecycle tracking.
- * For other LLM backends (e.g. OllamaLLM), uses a lightweight pass-through session.
+ * Execute a function with a scoped LLM session using a specific LlamaCpp instance.
+ * Unlike withLLMSession, this does not use the global singleton.
  */
 export async function withLLMSessionForLlm<T>(
-  llm: LLM,
+  llm: LlamaCpp,
   fn: (session: ILLMSession) => Promise<T>,
   options?: LLMSessionOptions
 ): Promise<T> {
-  if (llm instanceof LlamaCpp) {
-    const manager = new LLMSessionManager(llm);
-    const session = new LLMSession(manager, options);
-    try {
-      return await fn(session);
-    } finally {
-      session.release();
-    }
-  }
+  const manager = new LLMSessionManager(llm);
+  const session = new LLMSession(manager, options);
 
-  // Lightweight session for non-LlamaCpp backends (e.g. Ollama)
-  const session = new SimpleLLMSession(llm, options);
   try {
     return await fn(session);
   } finally {
