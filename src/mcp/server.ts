@@ -533,6 +533,290 @@ Intent-aware lex (C++ performance, not sports):
     }
   );
 
+  // ---------------------------------------------------------------------------
+  // Tool: collections (List all collections)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    "collections",
+    {
+      title: "List Collections",
+      description: "List all collections with their paths, glob patterns, document counts, and last modified dates.",
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      inputSchema: {},
+    },
+    async () => {
+      const collections = await store.listCollections();
+
+      if (collections.length === 0) {
+        return {
+          content: [{ type: "text", text: "No collections configured." }],
+          structuredContent: { collections: [] },
+        };
+      }
+
+      const lines = [`Collections (${collections.length}):`];
+      for (const col of collections) {
+        const pattern = col.glob_pattern || "**/*.md";
+        lines.push(`  - ${col.name}: ${col.pwd} (${pattern}, ${col.doc_count} docs, last modified: ${col.last_modified || "never"})`);
+      }
+
+      return {
+        content: [{ type: "text", text: lines.join('\n') }],
+        structuredContent: { collections },
+      };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Tool: add_collection (Add a new collection)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    "add_collection",
+    {
+      title: "Add Collection",
+      description: "Add a new collection by pointing it at a directory path. Optionally specify a glob pattern and ignore patterns.",
+      inputSchema: {
+        name: z.string().describe("Name for the new collection"),
+        path: z.string().describe("Filesystem path to the collection directory"),
+        pattern: z.string().optional().describe("Glob pattern for matching files (default: '**/*.md')"),
+        ignore: z.array(z.string()).optional().describe("List of paths/patterns to ignore"),
+      },
+    },
+    async ({ name, path, pattern, ignore }) => {
+      await store.addCollection(name, { path, pattern, ignore });
+      return {
+        content: [{ type: "text", text: `Collection "${name}" added at ${path}. Run update_index to index documents.` }],
+      };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Tool: remove_collection (Remove a collection)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    "remove_collection",
+    {
+      title: "Remove Collection",
+      description: "Remove a collection by name. This removes it from the index but does not delete files on disk.",
+      inputSchema: {
+        name: z.string().describe("Name of the collection to remove"),
+      },
+    },
+    async ({ name }) => {
+      const removed = await store.removeCollection(name);
+      if (removed) {
+        return {
+          content: [{ type: "text", text: `Collection "${name}" removed.` }],
+        };
+      }
+      return {
+        content: [{ type: "text", text: `Collection "${name}" not found.` }],
+        isError: true,
+      };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Tool: rename_collection (Rename a collection)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    "rename_collection",
+    {
+      title: "Rename Collection",
+      description: "Rename an existing collection.",
+      inputSchema: {
+        old_name: z.string().describe("Current name of the collection"),
+        new_name: z.string().describe("New name for the collection"),
+      },
+    },
+    async ({ old_name, new_name }) => {
+      const renamed = await store.renameCollection(old_name, new_name);
+      if (renamed) {
+        return {
+          content: [{ type: "text", text: `Collection "${old_name}" renamed to "${new_name}".` }],
+        };
+      }
+      return {
+        content: [{ type: "text", text: `Collection "${old_name}" not found.` }],
+        isError: true,
+      };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Tool: contexts (List all contexts)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    "contexts",
+    {
+      title: "List Contexts",
+      description: "List all path contexts across collections, plus the global context if set.",
+      annotations: { readOnlyHint: true, openWorldHint: false },
+      inputSchema: {},
+    },
+    async () => {
+      const contexts = await store.listContexts();
+      const globalCtx = await store.getGlobalContext();
+
+      const lines: string[] = [];
+
+      if (globalCtx) {
+        lines.push(`Global context: ${globalCtx}`);
+      }
+
+      if (contexts.length === 0 && !globalCtx) {
+        return {
+          content: [{ type: "text", text: "No contexts configured." }],
+          structuredContent: { globalContext: undefined, contexts: [] },
+        };
+      }
+
+      if (contexts.length > 0) {
+        lines.push(`Path contexts (${contexts.length}):`);
+        for (const ctx of contexts) {
+          lines.push(`  - ${ctx.collection}:${ctx.path} — ${ctx.context}`);
+        }
+      }
+
+      return {
+        content: [{ type: "text", text: lines.join('\n') }],
+        structuredContent: { globalContext: globalCtx ?? null, contexts },
+      };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Tool: add_context (Add context to a collection path)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    "add_context",
+    {
+      title: "Add Context",
+      description: "Add context text for a path within a collection. This helps the LLM understand what content is in that area.",
+      inputSchema: {
+        collection: z.string().describe("Collection name to add context to"),
+        path: z.string().default("/").describe("Path prefix within the collection (default: '/')"),
+        context: z.string().describe("Descriptive context text for this path"),
+      },
+    },
+    async ({ collection, path, context }) => {
+      const added = await store.addContext(collection, path, context);
+      if (added) {
+        return {
+          content: [{ type: "text", text: `Context added for ${collection}:${path}.` }],
+        };
+      }
+      return {
+        content: [{ type: "text", text: `Failed to add context for ${collection}:${path}. Collection may not exist.` }],
+        isError: true,
+      };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Tool: remove_context (Remove context from a collection path)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    "remove_context",
+    {
+      title: "Remove Context",
+      description: "Remove context from a specific path within a collection.",
+      inputSchema: {
+        collection: z.string().describe("Collection name"),
+        path: z.string().describe("Path prefix to remove context from"),
+      },
+    },
+    async ({ collection, path }) => {
+      const removed = await store.removeContext(collection, path);
+      if (removed) {
+        return {
+          content: [{ type: "text", text: `Context removed from ${collection}:${path}.` }],
+        };
+      }
+      return {
+        content: [{ type: "text", text: `No context found at ${collection}:${path}.` }],
+        isError: true,
+      };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Tool: update_index (Re-index collections)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    "update_index",
+    {
+      title: "Update Index",
+      description: "Re-index collections by scanning the filesystem for new, changed, or removed files. If no collections specified, re-indexes all.",
+      inputSchema: {
+        collections: z.array(z.string()).optional().describe("Specific collections to re-index (default: all)"),
+      },
+    },
+    async ({ collections }) => {
+      const result = await store.update({
+        ...(collections && collections.length > 0 ? { collections } : {}),
+      });
+
+      const summary = [
+        `Index updated:`,
+        `  Collections: ${result.collections}`,
+        `  Indexed: ${result.indexed}`,
+        `  Updated: ${result.updated}`,
+        `  Unchanged: ${result.unchanged}`,
+        `  Removed: ${result.removed}`,
+        `  Needs embedding: ${result.needsEmbedding}`,
+      ];
+
+      return {
+        content: [{ type: "text", text: summary.join('\n') }],
+        structuredContent: result,
+      };
+    }
+  );
+
+  // ---------------------------------------------------------------------------
+  // Tool: embed (Generate vector embeddings)
+  // ---------------------------------------------------------------------------
+
+  server.registerTool(
+    "embed",
+    {
+      title: "Generate Embeddings",
+      description: "Generate vector embeddings for documents that need them. Requires node-llama-cpp and a model. Use force=true to re-embed all documents.",
+      inputSchema: {
+        force: z.boolean().optional().default(false).describe("Re-embed all documents, not just new ones (default: false)"),
+        model: z.string().optional().describe("Embedding model to use (default: embeddinggemma)"),
+      },
+    },
+    async ({ force, model }) => {
+      const result = await store.embed({
+        ...(force ? { force } : {}),
+        ...(model ? { model } : {}),
+      });
+
+      const summary = [
+        `Embedding complete:`,
+        `  Documents processed: ${result.docsProcessed}`,
+        `  Chunks embedded: ${result.chunksEmbedded}`,
+        `  Errors: ${result.errors}`,
+        `  Duration: ${(result.durationMs / 1000).toFixed(1)}s`,
+      ];
+
+      return {
+        content: [{ type: "text", text: summary.join('\n') }],
+        structuredContent: result,
+      };
+    }
+  );
+
   return server;
 }
 
