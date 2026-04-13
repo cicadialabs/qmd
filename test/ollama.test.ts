@@ -46,7 +46,7 @@ describe("OllamaLLM configuration", () => {
 
     try {
       const llm = new OllamaLLM();
-      expect((llm as any).baseUrl).toBe("http://localhost:11434");
+      expect((llm as any)._baseUrl).toBe("http://localhost:11434");
       expect(llm.embedModelId).toBe("nomic-embed-text");
       expect(llm.generateModelId).toBe("qwen3:1.7b");
       expect(llm.rerankModelId).toBe("qwen3:0.6b");
@@ -75,7 +75,7 @@ describe("OllamaLLM configuration", () => {
 
     try {
       const llm = new OllamaLLM();
-      expect((llm as any).baseUrl).toBe("http://my-ollama:12345");
+      expect((llm as any)._baseUrl).toBe("http://my-ollama:12345");
       expect(llm.embedModelId).toBe("mxbai-embed-large");
       expect(llm.generateModelId).toBe("llama3:8b");
       expect(llm.rerankModelId).toBe("reranker-v2");
@@ -102,7 +102,7 @@ describe("OllamaLLM configuration", () => {
         generateModel: "config-gen",
         rerankModel: "config-rerank",
       });
-      expect((llm as any).baseUrl).toBe("http://config-url:9999");
+      expect((llm as any)._baseUrl).toBe("http://config-url:9999");
       expect(llm.embedModelId).toBe("config-embed");
       expect(llm.generateModelId).toBe("config-gen");
       expect(llm.rerankModelId).toBe("config-rerank");
@@ -128,7 +128,7 @@ describe("OllamaLLM configuration", () => {
   test("createOllamaLLM factory creates OllamaLLM instance", () => {
     const llm = createOllamaLLM({ baseUrl: "http://test:1234" });
     expect(llm).toBeInstanceOf(OllamaLLM);
-    expect((llm as any).baseUrl).toBe("http://test:1234");
+    expect((llm as any)._baseUrl).toBe("http://test:1234");
   });
 });
 
