@@ -924,6 +924,7 @@ export async function startMcpHttpServer(port: number, options?: { quiet?: boole
   const httpServer = createServer(async (nodeReq: IncomingMessage, nodeRes: ServerResponse) => {
     const reqStart = Date.now();
     const pathname = nodeReq.url || "/";
+    let reindexInProgress = false;
 
     try {
       if (pathname === "/health" && nodeReq.method === "GET") {
@@ -942,21 +943,33 @@ export async function startMcpHttpServer(port: number, options?: { quiet?: boole
 
       // REST endpoint: GET /reindex — re-index all collections
       if (pathname === "/reindex" && nodeReq.method === "GET") {
+        // Check if already re-indexing
+        if (reindexInProgress) {
+          nodeRes.writeHead(409, { "Content-Type": "application/json" });
+          nodeRes.end(JSON.stringify({ error: "Re-index already in progress" }));
+          return;
+        }
+
+        reindexInProgress = true;
         const start = Date.now();
         log(`${ts()} GET /reindex (re-indexing all collections)`);
 
-        const result = await store.update();
+        try {
+          const result = await store.update();
 
-        const body = JSON.stringify({
-          collections: result.collections,
-          indexed: result.indexed,
-          updated: result.updated,
-          unchanged: result.unchanged,
-          removed: result.removed,
-          durationMs: Date.now() - start,
-        });
-        nodeRes.writeHead(200, { "Content-Type": "application/json" });
-        nodeRes.end(body);
+          const body = JSON.stringify({
+            collections: result.collections,
+            indexed: result.indexed,
+            updated: result.updated,
+            unchanged: result.unchanged,
+            removed: result.removed,
+            durationMs: Date.now() - start,
+          });
+          nodeRes.writeHead(200, { "Content-Type": "application/json" });
+          nodeRes.end(body);
+        } finally {
+          reindexInProgress = false;
+        }
         return;
       }
 
