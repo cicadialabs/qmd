@@ -921,10 +921,12 @@ export async function startMcpHttpServer(port: number, options?: { quiet?: boole
     return Buffer.concat(chunks).toString();
   }
 
+  let reindexInProgress: Promise<unknown> | null = null;
+
   const httpServer = createServer(async (nodeReq: IncomingMessage, nodeRes: ServerResponse) => {
     const reqStart = Date.now();
     const pathname = nodeReq.url || "/";
-    let reindexInProgress = false;
+    const isReindexing = () => reindexInProgress !== null;
 
     try {
       if (pathname === "/health" && nodeReq.method === "GET") {
@@ -934,7 +936,7 @@ export async function startMcpHttpServer(port: number, options?: { quiet?: boole
           uptime: Math.floor((Date.now() - startTime) / 1000),
           indexedDocuments: status.totalDocuments,
           needsEmbedding: status.needsEmbedding,
-          reindexInProgress,
+          reindexInProgress: isReindexing(),
         });
         nodeRes.writeHead(200, { "Content-Type": "application/json" });
         nodeRes.end(body);
@@ -945,18 +947,21 @@ export async function startMcpHttpServer(port: number, options?: { quiet?: boole
       // REST endpoint: GET /reindex — re-index all collections
       if (pathname === "/reindex" && nodeReq.method === "GET") {
         // Check if already re-indexing
-        if (reindexInProgress) {
+        if (isReindexing()) {
           nodeRes.writeHead(409, { "Content-Type": "application/json" });
           nodeRes.end(JSON.stringify({ error: "Re-index already in progress" }));
           return;
         }
 
-        reindexInProgress = true;
         const start = Date.now();
         log(`${ts()} GET /reindex (re-indexing all collections)`);
 
+        // Start reindex and store the promise
+        const reindexPromise = store.update();
+        reindexInProgress = reindexPromise;
+
         try {
-          const result = await store.update();
+          const result = await reindexPromise;
 
           const body = JSON.stringify({
             collections: result.collections,
@@ -969,7 +974,7 @@ export async function startMcpHttpServer(port: number, options?: { quiet?: boole
           nodeRes.writeHead(200, { "Content-Type": "application/json" });
           nodeRes.end(body);
         } finally {
-          reindexInProgress = false;
+          reindexInProgress = null;
         }
         return;
       }
