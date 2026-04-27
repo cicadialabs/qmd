@@ -940,6 +940,32 @@ export async function startMcpHttpServer(port: number, options?: { quiet?: boole
         return;
       }
 
+      // REST endpoint: POST /reindex — re-index collections
+      if (pathname === "/reindex" && nodeReq.method === "POST") {
+        const start = Date.now();
+        const rawBody = await collectBody(nodeReq);
+        const params = rawBody ? JSON.parse(rawBody) : {};
+        const collections = params.collections; // optional array of collection names
+
+        log(`${ts()} POST /reindex (collections: ${collections ? collections.join(',') : 'all'})`);
+
+        const result = await store.update(
+          collections ? { collections } : undefined
+        );
+
+        const body = JSON.stringify({
+          collections: result.collections,
+          indexed: result.indexed,
+          updated: result.updated,
+          unchanged: result.unchanged,
+          removed: result.removed,
+          durationMs: Date.now() - start,
+        });
+        nodeRes.writeHead(200, { "Content-Type": "application/json" });
+        nodeRes.end(body);
+        return;
+      }
+
       // REST endpoint: POST /search — structured search without MCP protocol
       // REST endpoint: POST /query (alias: /search) — structured search without MCP protocol
       if ((pathname === "/query" || pathname === "/search") && nodeReq.method === "POST") {
