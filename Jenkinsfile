@@ -225,13 +225,15 @@ spec:
               cpu: "500m"
               memory: "3Gi"
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health
               port: 8181
             initialDelaySeconds: 30
             periodSeconds: 10
             failureThreshold: 3
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /health
               port: 8181
             initialDelaySeconds: 60
             periodSeconds: 20
