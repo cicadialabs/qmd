@@ -938,6 +938,7 @@ export async function startMcpHttpServer(port: number, options?: { quiet?: boole
           indexedDocuments: status.totalDocuments,
           needsEmbedding: status.needsEmbedding,
           reindexInProgress: isReindexing(),
+          collections: status.collections,
         });
         nodeRes.writeHead(200, { "Content-Type": "application/json" });
         nodeRes.end(body);
