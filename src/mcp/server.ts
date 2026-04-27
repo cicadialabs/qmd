@@ -863,6 +863,10 @@ export async function startMcpHttpServer(port: number, options?: { quiet?: boole
   // The store is shared — it's stateless SQLite, safe for concurrent access.
   const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
 
+  // Reindex mutex - prevents concurrent reindexing
+  let reindexInProgress: Promise<unknown> | null = null;
+  const isReindexing = () => reindexInProgress !== null;
+
   async function createSession(): Promise<WebStandardStreamableHTTPServerTransport> {
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
@@ -920,9 +924,6 @@ export async function startMcpHttpServer(port: number, options?: { quiet?: boole
     for await (const chunk of req) chunks.push(chunk as Buffer);
     return Buffer.concat(chunks).toString();
   }
-
-  let reindexInProgress: Promise<unknown> | null = null;
-  const isReindexing = () => reindexInProgress !== null;
 
   const httpServer = createServer(async (nodeReq: IncomingMessage, nodeRes: ServerResponse) => {
     const reqStart = Date.now();
