@@ -922,11 +922,11 @@ export async function startMcpHttpServer(port: number, options?: { quiet?: boole
   }
 
   let reindexInProgress: Promise<unknown> | null = null;
+  const isReindexing = () => reindexInProgress !== null;
 
   const httpServer = createServer(async (nodeReq: IncomingMessage, nodeRes: ServerResponse) => {
     const reqStart = Date.now();
     const pathname = nodeReq.url || "/";
-    const isReindexing = () => reindexInProgress !== null;
 
     try {
       if (pathname === "/health" && nodeReq.method === "GET") {
