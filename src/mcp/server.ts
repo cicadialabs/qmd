@@ -981,6 +981,45 @@ export async function startMcpHttpServer(port: number, options?: { quiet?: boole
         return;
       }
 
+      // REST endpoint: POST /collections — add a collection
+      if (pathname === "/collections" && nodeReq.method === "POST") {
+        const rawBody = await collectBody(nodeReq);
+        const params = JSON.parse(rawBody);
+
+        if (!params.name || !params.path) {
+          nodeRes.writeHead(400, { "Content-Type": "application/json" });
+          nodeRes.end(JSON.stringify({ error: "Missing required fields: name, path" }));
+          return;
+        }
+
+        log(`${ts()} POST /collections (name: ${params.name}, path: ${params.path})`);
+
+        try {
+          await store.addCollection(params.name, {
+            path: params.path,
+            pattern: params.pattern || "**/*.md",
+            ignore: params.ignore,
+          });
+
+          // Trigger reindex for the new collection
+          const result = await store.update({ collections: [params.name] });
+
+          const body = JSON.stringify({
+            name: params.name,
+            path: params.path,
+            pattern: params.pattern || "**/*.md",
+            indexed: result.indexed,
+            updated: result.updated,
+          });
+          nodeRes.writeHead(201, { "Content-Type": "application/json" });
+          nodeRes.end(body);
+        } catch (e: any) {
+          nodeRes.writeHead(400, { "Content-Type": "application/json" });
+          nodeRes.end(JSON.stringify({ error: e.message }));
+        }
+        return;
+      }
+
       // REST endpoint: POST /search — structured search without MCP protocol
       // REST endpoint: POST /query (alias: /search) — structured search without MCP protocol
       if ((pathname === "/query" || pathname === "/search") && nodeReq.method === "POST") {
