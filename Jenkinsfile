@@ -93,12 +93,18 @@ spec:
             set -eu
             cd /workspace/repo
 
-            echo "Building Docker image: ${DOCKER_IMAGE_FULL}"
-            docker build \
+            # Enable docker multi-arch builder if not exists
+            docker buildx create --name multiarch-builder --use 2>/dev/null || true
+            docker buildx inspect multiarch-builder --bootstrap || docker buildx install --bootstrap
+
+            echo "Building multi-arch Docker image: ${DOCKER_IMAGE_FULL}"
+            docker buildx build \
+              --platform linux/amd64,linux/arm64 \
               --tag "${DOCKER_IMAGE_FULL}" \
               --build-arg BUILD_DATE="$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
               --build-arg VCS_REF="$(cat /workspace/revision.txt)" \
               --build-arg VERSION="${DOCKER_TAG}" \
+              --push \
               .
 
             echo "Listing built image..."
@@ -114,6 +120,9 @@ spec:
           sh '''
             set -eu
             echo "Running tests in container..."
+
+            # Pull the image from registry for testing
+            docker pull "${DOCKER_IMAGE_FULL}"
 
             # Start container in background
             docker run -d --name qmd-test --rm \
@@ -138,27 +147,6 @@ spec:
               docker kill qmd-test || true
               exit 1
             fi
-          '''
-        }
-      }
-    }
-
-    stage('Push Docker image') {
-      when {
-        expression { params.PUSH_IMAGE == true }
-      }
-      steps {
-        container('builder') {
-          sh '''
-            set -eu
-            echo "Logging in to Docker registry..."
-            # Note: DOCKER_AUTH likely needs to be configured in Jenkins credentials
-            # For now, assuming public push or anonymous push for docker.io
-
-            echo "Pushing image: ${DOCKER_IMAGE_FULL}"
-            docker push "${DOCKER_IMAGE_FULL}"
-
-            echo "Image pushed successfully"
           '''
         }
       }
