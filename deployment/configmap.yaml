@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qmd-config
+  namespace: cicadia-system
+  labels:
+    app.kubernetes.io/name: qmd
+data:
+  index.yml: |
+    collections:
+      knowledge:
+        path: /data
+        pattern: "**/*.{md,mdx,txt,text,rst,adoc,csv,ts,tsx,js,jsx,mjs,cjs,py,go,java,rs,json,yaml,yml}"
+        includeByDefault: true

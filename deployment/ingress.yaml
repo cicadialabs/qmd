@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: qmd
+  namespace: cicadia-system
+  labels:
+    app.kubernetes.io/name: qmd
+  annotations:
+    cert-manager.io/cluster-issuer: cicadia-internal-ca
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: qmd.cicadialabs.internal
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: qmd
+                port:
+                  number: 8181
+  tls:
+    - hosts:
+        - qmd.cicadialabs.internal
+      secretName: cicadia-internal-wildcard
