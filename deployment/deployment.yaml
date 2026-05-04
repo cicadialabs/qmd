@@ -25,7 +25,7 @@ spec:
         runAsGroup: 0
       containers:
         - name: qmd
-          image: daviddwyer1987/qmd-cicadia:1.0.9
+          image: daviddwyer1987/qmd-cicadia:1.0.10
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8181
@@ -46,7 +46,7 @@ spec:
             - name: QMD_OLLAMA_GENERATE_MODEL
               value: qwen3:1.7b
             - name: QMD_OLLAMA_RERANK_MODEL
-              value: qwen3:0.6b
+              value: gemma4:31b-cloud
             - name: QMD_CONFIG_DIR
               value: /qmd-data
             - name: INDEX_PATH
