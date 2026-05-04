@@ -369,6 +369,8 @@ export class OllamaLLM implements LLM {
     }
   }
 
+  private static readonly RERANK_BATCH_SIZE = 5;
+
   async rerank(
     query: string,
     documents: RerankDocument[],
@@ -382,7 +384,6 @@ export class OllamaLLM implements LLM {
       return { results: [], model };
     }
 
-    // Deduplicate by text before scoring
     const textToDocs = new Map<string, { file: string; index: number }[]>();
     documents.forEach((doc, index) => {
       const existing = textToDocs.get(doc.text);
@@ -395,18 +396,20 @@ export class OllamaLLM implements LLM {
 
     const uniqueTexts = Array.from(textToDocs.keys());
 
-    // Score each document in parallel using chat-based relevance judgment.
-    // Ollama doesn't have a native rerank API, so we use the chat endpoint
-    // to generate yes/no relevance judgments and derive scores from response tokens.
-    const scores = await Promise.all(
-      uniqueTexts.map(async (docText) => {
-        return this.scoreDocument(query, docText, model);
-      })
+    const batchSize = OllamaLLM.RERANK_BATCH_SIZE;
+    const batches: string[][] = [];
+    for (let i = 0; i < uniqueTexts.length; i += batchSize) {
+      batches.push(uniqueTexts.slice(i, i + batchSize));
+    }
+
+    const batchScores = await Promise.all(
+      batches.map((batch) => this.scoreBatch(query, batch, model))
     );
 
-    // Map back to per-document results
+    const scores = batchScores.flat();
+
     const ranked = uniqueTexts
-      .map((text, i) => ({ document: text, score: scores[i]! }))
+      .map((text, i) => ({ document: text, score: scores[i] ?? 0.0 }))
       .sort((a, b) => b.score - a.score);
 
     const results: RerankDocumentResult[] = [];
@@ -425,39 +428,31 @@ export class OllamaLLM implements LLM {
   }
 
   async dispose(): Promise<void> {
-    // Nothing to dispose — Ollama manages its own resources
     this.disposed = true;
   }
 
-  // ===========================================================================
-  // Reranking helpers
-  // ===========================================================================
-
-  /**
-   * Score a single document's relevance to a query using Ollama's chat API.
-   *
-   * Sends a structured prompt asking the model to judge relevance, then
-   * parses the response to derive a numeric score. The model is instructed
-   * to output only "yes" or "no" with an optional confidence score.
-   */
-  private async scoreDocument(
+  private async scoreBatch(
     query: string,
-    documentText: string,
+    docTexts: string[],
     model: string
-  ): Promise<number> {
-    // Truncate very long documents to keep prompt manageable
-    const maxDocChars = 2000;
-    const truncatedDoc =
-      documentText.length > maxDocChars
-        ? documentText.slice(0, maxDocChars) + "..."
-        : documentText;
+  ): Promise<number[]> {
+    const maxDocChars = 500;
+    const truncated = docTexts.map((t) =>
+      t.length > maxDocChars ? t.slice(0, maxDocChars) + "..." : t
+    );
+
+    const docList = truncated
+      .map((t, i) => `[${i + 1}] ${t}`)
+      .join("\n\n");
 
     const systemPrompt =
-      `You are a relevance judge. Given a query and a document, determine if the document is relevant to the query. ` +
-      `Respond with ONLY a single line in this exact format: "relevance: <score>" where <score> is a number between 0.0 (not relevant) and 1.0 (highly relevant). ` +
-      `Do not include any other text, explanation, or reasoning.`;
+      `/no_think You are a relevance judge. Given a query and multiple numbered documents, score each document's relevance to the query. ` +
+      `Respond with ONLY numbered scores, one per line, in this exact format:\n` +
+      `1: <score>\n2: <score>\n...\n` +
+      `where <score> is between 0.0 (irrelevant) and 1.0 (highly relevant). ` +
+      `Do not include any other text.`;
 
-    const userPrompt = `Query: ${query}\n\nDocument:\n${truncatedDoc}`;
+    const userPrompt = `Query: ${query}\n\nDocuments:\n${docList}`;
 
     const body: OllamaChatRequest = {
       model,
@@ -468,7 +463,7 @@ export class OllamaLLM implements LLM {
       stream: false,
       options: {
         temperature: 0.1,
-        num_predict: 32,
+        num_predict: 512,
         top_k: 5,
         top_p: 0.9,
       },
@@ -476,44 +471,38 @@ export class OllamaLLM implements LLM {
 
     try {
       const resp = await this.fetch("/api/chat", body);
-      if (!resp.ok) {
-        return 0.0;
-      }
+      if (!resp.ok) return docTexts.map(() => 0.0);
 
       const data = (await resp.json()) as OllamaChatResponse;
       const content = data.message?.content?.trim() ?? "";
 
-      // Parse "relevance: <score>" from response
-      const match = content.match(/relevance:\s*([0-9]*\.?[0-9]+)/i);
-      if (match?.[1]) {
-        const score = parseFloat(match[1]);
-        if (Number.isFinite(score)) {
-          return Math.max(0.0, Math.min(1.0, score));
+      return docTexts.map((_, i) => {
+        const idx = i + 1;
+        const lineMatch = content.split("\n").find((l) => l.trim().startsWith(`${idx}:`) || l.trim().startsWith(`${idx}.`));
+        if (lineMatch) {
+          const numMatch = lineMatch.match(/([0-9]*\.?[0-9]+)/g);
+          if (numMatch && numMatch.length >= 2) {
+            const score = parseFloat(numMatch[numMatch.length - 1]!);
+            if (Number.isFinite(score)) return Math.max(0.0, Math.min(1.0, score));
+          }
+          if (numMatch && numMatch.length >= 1) {
+            const score = parseFloat(numMatch[0]!);
+            if (Number.isFinite(score) && score <= 1.0) return Math.max(0.0, score);
+            if (Number.isFinite(score) && score > 1.0) return Math.min(1.0, score / 10.0);
+          }
         }
-      }
 
-      // Fallback: look for any number in the response
-      const numMatch = content.match(/([0-9]*\.?[0-9]+)/);
-      if (numMatch?.[1]) {
-        const score = parseFloat(numMatch[1]);
-        if (Number.isFinite(score) && score >= 0 && score <= 1) {
-          return score;
+        const globalMatch = content.match(new RegExp(`\\b${idx}[\\s:.]+([0-9]*\\.?[0-9]+)`, "i"));
+        if (globalMatch?.[1]) {
+          const score = parseFloat(globalMatch[1]!);
+          if (Number.isFinite(score)) return Math.max(0.0, Math.min(1.0, score > 1 ? score / 10 : score));
         }
-      }
 
-      // Last resort: check for yes/no keywords
-      const lower = content.toLowerCase();
-      if (lower.includes("yes") || lower.includes("relevant")) {
-        return 0.7;
-      }
-      if (lower.includes("no") || lower.includes("not relevant") || lower.includes("irrelevant")) {
-        return 0.1;
-      }
-
-      return 0.0;
+        return 0.0;
+      });
     } catch (error) {
-      console.error("Ollama rerank score error:", error);
-      return 0.0;
+      console.error("Ollama rerank batch error:", error);
+      return docTexts.map(() => 0.0);
     }
   }
 
